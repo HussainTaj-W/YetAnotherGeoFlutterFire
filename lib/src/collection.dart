@@ -77,9 +77,12 @@ class GeoFireCollectionRef {
     }
   }
 
-  /// query firestore documents based on geographic [radius] from geoFirePoint [center]
-  /// [field] specifies the name of the key in the document
-  Stream<List<DistanceDocSnapshot>> within({
+  /// Create combined stream listeners for each geo hash around (including) central point.
+  /// It creates 9 listeners and the hood.
+  ///
+  /// Returns [StreamController.stream] instance from rxdart, which is combined stream,
+  /// for all 9 listeners.
+  Stream<List<DistanceDocSnapshot>> _buildQueryStream({
     required GeoFirePoint center,
     required double radius,
     required String field,
@@ -87,7 +90,9 @@ class GeoFireCollectionRef {
   }) {
     final precision = Util.setPrecision(radius);
     final centerHash = center.hash.substring(0, precision);
-    final area = GeoFirePoint.neighborsOf(hash: centerHash)..add(centerHash);
+    final area = Set<String>.from(
+      GeoFirePoint.neighborsOf(hash: centerHash)..add(centerHash),
+    ).toList();
 
     Iterable<Stream<List<DistanceDocSnapshot>>> queries = area.map((hash) {
       final tempQuery = _queryPoint(hash, field);
@@ -138,7 +143,54 @@ class GeoFireCollectionRef {
       });
       return filteredList.toList();
     });
-    return filtered.asBroadcastStream();
+    return filtered;
+  }
+
+  /// Query firestore documents based on geographic [radius] from geoFirePoint [center]
+  /// [field] specifies the name of the key in the document
+  /// returns merged stream as broadcast stream.
+  ///
+  /// Returns original stream from the underlying rxdart implementation, which
+  /// could be safely cancelled without memory leaks. It's single stream subscription,
+  /// so only single listener could be created at a time.
+  ///
+  /// This works the best if you have central point of listening for locations,
+  /// not per widget.
+  Stream<List<DistanceDocSnapshot>> withinAsSingleStreamSubscription({
+    required GeoFirePoint center,
+    required double radius,
+    required String field,
+    bool strictMode = false,
+  }) {
+    return _buildQueryStream(
+      center: center,
+      radius: radius,
+      field: field,
+      strictMode: strictMode,
+    );
+  }
+
+  /// Query firestore documents based on geographic [radius] from geoFirePoint [center]
+  /// [field] specifies the name of the key in the document
+  /// returns merged stream as broadcast stream.
+  ///
+  /// !WARNING! This causes memory leaks because under the hood rxdart StreamController
+  /// never causes it's subscriptions to be cancelled. So, even you cancel stream
+  /// subscription created from this method, under the hood listeners are still working.
+  ///
+  /// More at: https://github.com/dart-lang/sdk/issues/26686#issuecomment-225346901
+  Stream<List<DistanceDocSnapshot>> within({
+    required GeoFirePoint center,
+    required double radius,
+    required String field,
+    bool strictMode = false,
+  }) {
+    return _buildQueryStream(
+      center: center,
+      radius: radius,
+      field: field,
+      strictMode: strictMode,
+    ).asBroadcastStream();
   }
 
   Stream<List<DistanceDocSnapshot>> mergeObservable(
